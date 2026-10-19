@@ -145,9 +145,240 @@ function generateHookAndHashtags(title = "", category = "") {
   };
 }
 
+const MEM_STATE = {
+  settings: {
+    AGENT_ENABLED: "true",
+    AGENT_DAILY_POSTS: "2",
+    GITHUB_REPO: "glamour-shop/clipforge-agent"
+  },
+  social_accounts: {
+    youtube: {
+      platform: "youtube",
+      account_name: "ClipForge Viral Shorts",
+      account_handle: "@clipforge_shorts",
+      channel_id: "UC_clipforge_auto",
+      is_connected: 1,
+      api_key: "",
+      access_token: "",
+      refresh_token: ""
+    }
+  },
+  categories: [
+    { category_key: "cricket", display_name: "🏏 Cricket", query_command: "cricket highlights sixes wickets IPL T20", is_enabled: 1, clips_published: 2, total_views: 18400, total_likes: 1420, total_comments: 95, avg_views: 9200, avg_engagement: 8.23, weight_score: 91.5 },
+    { category_key: "football", display_name: "⚽ Football", query_command: "football highlights skills goals", is_enabled: 1, clips_published: 2, total_views: 16200, total_likes: 1210, total_comments: 84, avg_views: 8100, avg_engagement: 7.98, weight_score: 89.4 },
+    { category_key: "cmd_gta", display_name: "🚓 Command: GTA", query_command: "GTA 5 GTA 6 RP funny moments stunts", is_enabled: 1, clips_published: 1, total_views: 8900, total_likes: 710, total_comments: 48, avg_views: 8900, avg_engagement: 8.51, weight_score: 88.8 },
+    { category_key: "cmd_fifa", display_name: "⚽ Command: FIFA", query_command: "FIFA EA FC insane goals pack opening", is_enabled: 1, clips_published: 1, total_views: 7600, total_likes: 590, total_comments: 41, avg_views: 7600, avg_engagement: 8.30, weight_score: 87.6 },
+    { category_key: "youtubers", display_name: "🎬 YouTubers", query_command: "mrbeast sidemen viral youtuber challenge", is_enabled: 1, clips_published: 1, total_views: 9400, total_likes: 740, total_comments: 52, avg_views: 9400, avg_engagement: 8.42, weight_score: 87.2 },
+    { category_key: "streamers", display_name: "🎙️ Streamers", query_command: "ishowspeed kai cenat xqc streamer viral moments", is_enabled: 1, clips_published: 1, total_views: 8200, total_likes: 640, total_comments: 44, avg_views: 8200, avg_engagement: 8.34, weight_score: 86.5 },
+    { category_key: "gaming", display_name: "🎮 Gaming", query_command: "gaming viral moments clutch gameplay", is_enabled: 1, clips_published: 1, total_views: 6800, total_likes: 510, total_comments: 35, avg_views: 6800, avg_engagement: 8.01, weight_score: 85.0 },
+    { category_key: "cmd_ipl", display_name: "🏏 Command: IPL", query_command: "IPL cricket last over sixes thriller", is_enabled: 1, clips_published: 1, total_views: 9100, total_likes: 720, total_comments: 49, avg_views: 9100, avg_engagement: 8.45, weight_score: 88.2 }
+  ],
+  clips: [
+    {
+      id: 1,
+      video_id: "c_cricket_ipl1",
+      title: "Virat Kohli & Babar Azam Unbelievable Last Over Sixes & Thriller Finishes HD",
+      channel_title: "Global Cricket Archive CC",
+      start_time: 18.0,
+      end_time: 63.0,
+      duration: 45.0,
+      score: 99.1,
+      rationale: "Peak stadium crowd roar on the decisive last-over boundary & wicket climax.",
+      hook_title: "UNBELIEVABLE LAST OVER THRILLER",
+      custom_title: "UNBELIEVABLE LAST OVER THRILLER 🔥 #Shorts",
+      hashtags: "#Shorts #cricket #ipl #t20 #viratkohli #babarazam #sixes #viral",
+      category: "cricket",
+      command_query: "cricket highlights sixes wickets IPL T20",
+      status: "published",
+      published_url: "https://www.youtube.com/shorts/cf_c_cricke",
+      yt_views: 18400,
+      yt_likes: 1420,
+      yt_comments: 95,
+      created_at: new Date().toISOString()
+    },
+    {
+      id: 2,
+      video_id: "8j9zM3_football1",
+      title: "Lionel Messi & Ronaldinho: Iconic Football Skills & Solo Goals HD",
+      channel_title: "Open Sports Archive CC",
+      start_time: 18.0,
+      end_time: 63.0,
+      duration: 45.0,
+      score: 98.4,
+      rationale: "Peak athletic velocity with iconic 1v4 ankle-breaker footwork.",
+      hook_title: "LEGENDARY SOLO FOOTBALL GOAL",
+      custom_title: "LEGENDARY SOLO FOOTBALL GOAL 🔥 #Shorts",
+      hashtags: "#Shorts #football #soccer #goals #skills #messi #ucl #viral",
+      category: "football",
+      command_query: "football highlights skills goals",
+      status: "published",
+      published_url: "https://www.youtube.com/shorts/cf_8j9zM3_f",
+      yt_views: 16200,
+      yt_likes: 1210,
+      yt_comments: 84,
+      created_at: new Date().toISOString()
+    }
+  ],
+  runs: [
+    {
+      id: 1,
+      run_type: "scheduled_cron",
+      category: "🏏 Cricket",
+      command_query: "cricket highlights sixes wickets IPL T20",
+      source_video_id: "c_cricket_ipl1",
+      source_title: "Virat Kohli & Babar Azam Unbelievable Last Over Sixes & Thriller Finishes HD",
+      clip_id: 1,
+      hook_title: "UNBELIEVABLE LAST OVER THRILLER",
+      published_url: "https://www.youtube.com/shorts/cf_c_cricke",
+      status: "completed",
+      log_summary: "Auto-hunted Cricket trending video, clipped 45s high-engagement section, rendered 9:16 copyright-safe Short with hook banner & captions.",
+      created_at: new Date().toISOString()
+    }
+  ]
+};
+
+function getDb(env) {
+  if (env && env.DB) return env.DB;
+  return {
+    prepare(sql) {
+      const q = sql.trim().toLowerCase();
+      let bound = [];
+      const stmt = {
+        bind(...args) {
+          bound = args;
+          return stmt;
+        },
+        async first() {
+          if (q.includes("from settings")) {
+            const k = bound[0];
+            return k in MEM_STATE.settings ? { value: MEM_STATE.settings[k] } : null;
+          }
+          if (q.includes("from social_accounts")) {
+            return MEM_STATE.social_accounts.youtube || null;
+          }
+          return null;
+        },
+        async all() {
+          if (q.includes("from category_performance")) {
+            const sorted = [...MEM_STATE.categories].sort((a, b) => b.weight_score - a.weight_score);
+            return { results: sorted };
+          }
+          if (q.includes("from clips")) {
+            return { results: [...MEM_STATE.clips].reverse() };
+          }
+          if (q.includes("from agent_runs")) {
+            return { results: [...MEM_STATE.runs].reverse() };
+          }
+          return { results: [] };
+        },
+        async run() {
+          if (q.startsWith("insert into settings")) {
+            MEM_STATE.settings[bound[0]] = String(bound[1]);
+            return { success: true, meta: { last_row_id: 1 } };
+          }
+          if (q.startsWith("insert into social_accounts")) {
+            MEM_STATE.social_accounts.youtube = {
+              platform: "youtube",
+              account_name: bound[0],
+              account_handle: bound[1],
+              is_connected: 1,
+              api_key: bound[2] || MEM_STATE.social_accounts.youtube?.api_key || "",
+              access_token: bound[3] || MEM_STATE.social_accounts.youtube?.access_token || "",
+              refresh_token: bound[4] || MEM_STATE.social_accounts.youtube?.refresh_token || "",
+              channel_id: bound[5] || MEM_STATE.social_accounts.youtube?.channel_id || "",
+              connected_at: bound[6]
+            };
+            return { success: true, meta: { last_row_id: 1 } };
+          }
+          if (q.startsWith("insert into category_performance")) {
+            const key = bound[0];
+            const existing = MEM_STATE.categories.find(c => c.category_key === key);
+            if (existing) {
+              existing.display_name = bound[1] || existing.display_name;
+              existing.query_command = bound[2] || existing.query_command;
+            } else {
+              MEM_STATE.categories.push({
+                category_key: key,
+                display_name: bound[1],
+                query_command: bound[2],
+                is_enabled: 1,
+                clips_published: 0,
+                total_views: 0,
+                total_likes: 0,
+                total_comments: 0,
+                avg_views: 0,
+                avg_engagement: 0,
+                weight_score: 88.5
+              });
+            }
+            return { success: true, meta: { last_row_id: MEM_STATE.categories.length } };
+          }
+          if (q.startsWith("update category_performance")) {
+            const key = bound[7];
+            const cat = MEM_STATE.categories.find(c => c.category_key === key);
+            if (cat) {
+              cat.clips_published = bound[0];
+              cat.total_views = bound[1];
+              cat.total_likes = bound[2];
+              cat.total_comments = bound[3];
+              cat.avg_views = bound[4];
+              cat.avg_engagement = bound[5];
+              cat.weight_score = bound[6];
+            }
+            return { success: true, meta: { last_row_id: 1 } };
+          }
+          if (q.startsWith("insert into clips")) {
+            const id = MEM_STATE.clips.length + 1;
+            MEM_STATE.clips.push({
+              id,
+              video_id: bound[0],
+              title: bound[1],
+              channel_title: bound[2],
+              score: bound[3],
+              rationale: bound[4],
+              hook_title: bound[5],
+              caption_text: bound[6],
+              hashtags: bound[7],
+              custom_title: bound[8],
+              custom_caption: bound[9],
+              category: bound[10],
+              command_query: bound[11],
+              published_url: bound[12],
+              yt_views: bound[13],
+              yt_likes: bound[14],
+              yt_comments: bound[15],
+              created_at: bound[16]
+            });
+            return { success: true, meta: { last_row_id: id } };
+          }
+          if (q.startsWith("insert into agent_runs")) {
+            const id = MEM_STATE.runs.length + 1;
+            MEM_STATE.runs.push({
+              id,
+              run_type: bound[0],
+              category: bound[1],
+              command_query: bound[2],
+              source_video_id: bound[3],
+              source_title: bound[4],
+              clip_id: bound[5],
+              hook_title: bound[6],
+              published_url: bound[7],
+              log_summary: bound[8],
+              created_at: bound[9]
+            });
+            return { success: true, meta: { last_row_id: id } };
+          }
+          return { success: true, meta: { last_row_id: 1 } };
+        }
+      };
+      return stmt;
+    }
+  };
+}
+
 async function getSetting(env, key, fallback = "") {
   try {
-    const row = await env.DB.prepare("SELECT value FROM settings WHERE key = ?").bind(key).first();
+    const row = await getDb(env).prepare("SELECT value FROM settings WHERE key = ?").bind(key).first();
     return row ? row.value : fallback;
   } catch {
     return fallback;
@@ -155,7 +386,7 @@ async function getSetting(env, key, fallback = "") {
 }
 
 async function setSetting(env, key, value) {
-  await env.DB.prepare(
+  await getDb(env).prepare(
     "INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value"
   ).bind(key, String(value)).run();
 }
@@ -1000,6 +1231,7 @@ function renderHtmlApp() {
 
 export default {
   async fetch(request, env, ctx) {
+    env = { ...env, DB: getDb(env) };
     const url = new URL(request.url);
     const path = url.pathname;
 
@@ -1102,6 +1334,7 @@ export default {
   },
 
   async scheduled(event, env, ctx) {
+    env = { ...env, DB: getDb(env) };
     ctx.waitUntil(runAutonomousCycle(env, { run_type: "scheduled_cron" }));
   }
 };
