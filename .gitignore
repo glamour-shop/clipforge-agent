@@ -1,0 +1,22 @@
+# Virtual Environment & Python Cache
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Secrets & Environment
+.env
+client_secrets.json
+
+# Local Media & SQLite Cache
+downloads/
+*.db
+*.db-journal
+*.mp4
+*.wav
+*.ass
+
+# Node / Wrangler
+node_modules/
+.wrangler/

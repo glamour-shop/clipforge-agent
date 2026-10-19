@@ -1,0 +1,307 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Outfit:wght@500;600;700;800&display=swap');
+
+:root {
+    --bg-0: #0b0d12;
+    --bg-1: #12151d;
+    --bg-2: #181c26;
+    --line: rgba(255,255,255,0.07);
+    --line-strong: rgba(255,255,255,0.14);
+    --text: #e7e9f0;
+    --muted: #8b91a3;
+    --violet: #8b5cf6;
+    --cyan: #22d3ee;
+    --grad: linear-gradient(120deg, #8b5cf6 0%, #6366f1 45%, #22d3ee 100%);
+    --ok: #34d399;
+    --warn: #fbbf24;
+    --bad: #f87171;
+    --radius: 14px;
+}
+
+html, body, .stApp, div[class*="css"] { 
+    font-family: 'Inter', system-ui, -apple-system, sans-serif; 
+}
+
+.stApp {
+    background:
+        radial-gradient(1200px 600px at 10% -10%, rgba(139,92,246,0.12), transparent 60%),
+        radial-gradient(900px 500px at 110% 10%, rgba(34,211,238,0.08), transparent 60%),
+        var(--bg-0);
+    color: var(--text);
+}
+
+h1, h2, h3, h4, h5 { 
+    font-family: 'Outfit', 'Inter', sans-serif !important; 
+    letter-spacing: -0.01em; 
+    color: var(--text); 
+}
+
+.block-container { 
+    padding-top: 1.4rem !important; 
+    max-width: 1320px; 
+}
+
+/* Hide Streamlit chrome clutter */
+#MainMenu, footer, div[data-testid="stDecoration"], div[data-testid="stStatusWidget"] { 
+    visibility: hidden; 
+    height: 0; 
+}
+header[data-testid="stHeader"] { 
+    background: transparent; 
+}
+div[data-testid="stToolbar"] { 
+    right: 1rem; 
+}
+
+/* Brand bar */
+.cf-brand { 
+    display: flex; 
+    align-items: center; 
+    justify-content: space-between; 
+    margin-bottom: 1rem; 
+}
+.cf-logo { 
+    font-family: 'Outfit', sans-serif; 
+    font-weight: 800; 
+    font-size: 1.65rem; 
+    letter-spacing: -0.02em;
+    background: var(--grad); 
+    -webkit-background-clip: text; 
+    -webkit-text-fill-color: transparent; 
+}
+.cf-tag { 
+    color: var(--muted); 
+    font-size: 0.85rem; 
+    margin-top: 2px; 
+}
+.cf-pills { 
+    display: flex; 
+    gap: 8px; 
+    flex-wrap: wrap; 
+    justify-content: flex-end; 
+}
+.cf-pill { 
+    font-size: 0.74rem; 
+    font-weight: 600; 
+    padding: 4px 11px; 
+    border-radius: 999px;
+    border: 1px solid var(--line-strong); 
+    color: var(--muted); 
+    background: rgba(255,255,255,0.02); 
+}
+.cf-pill.on { 
+    color: var(--ok); 
+    border-color: rgba(52,211,153,0.35); 
+    background: rgba(52,211,153,0.07); 
+}
+
+/* Stepper */
+.st-key-cf_stepper { 
+    background: rgba(24,28,38,0.65); 
+    backdrop-filter: blur(14px);
+    border: 1px solid var(--line); 
+    border-radius: 16px; 
+    padding: 8px 10px 4px; 
+    margin-bottom: 1.2rem; 
+}
+.st-key-cf_stepper button { 
+    border-radius: 11px !important; 
+    border: 1px solid transparent !important;
+    background: transparent !important; 
+    color: var(--muted) !important; 
+    font-weight: 600 !important;
+    transition: all 0.2s ease !important; 
+}
+.st-key-cf_stepper button:hover { 
+    background: rgba(255,255,255,0.04) !important; 
+    color: var(--text) !important; 
+    transform: translateY(-1px); 
+}
+.st-key-cf_stepper button[kind="primary"] { 
+    background: var(--grad) !important; 
+    color: #fff !important;
+    box-shadow: 0 6px 22px rgba(99,102,241,0.35) !important; 
+}
+.cf-progress { 
+    height: 3px; 
+    border-radius: 3px; 
+    background: var(--line); 
+    margin: 6px 4px 4px; 
+    overflow: hidden; 
+}
+.cf-progress > div { 
+    height: 100%; 
+    background: var(--grad); 
+    transition: width 0.4s ease; 
+}
+
+/* Section header */
+.cf-h { 
+    margin: 0.2rem 0 1rem; 
+}
+.cf-h .t { 
+    font-family: 'Outfit', sans-serif; 
+    font-size: 1.55rem; 
+    font-weight: 700; 
+}
+.cf-h .s { 
+    color: var(--muted); 
+    font-size: 0.92rem; 
+    margin-top: 2px; 
+}
+
+/* Glass cards (bordered containers) */
+div[data-testid="stVerticalBlockBorderWrapper"] {
+    background: linear-gradient(180deg, rgba(24,28,38,0.72), rgba(18,21,29,0.72)) !important;
+    border: 1px solid var(--line) !important; 
+    border-radius: var(--radius) !important;
+    transition: border-color 0.2s ease, transform 0.2s ease, box-shadow 0.2s ease;
+}
+div[data-testid="stVerticalBlockBorderWrapper"]:hover { 
+    border-color: var(--line-strong) !important; 
+    box-shadow: 0 10px 30px rgba(0,0,0,0.25); 
+}
+
+/* Buttons */
+.stButton > button, .stDownloadButton > button {
+    border-radius: 10px; 
+    font-weight: 600; 
+    border: 1px solid var(--line-strong);
+    background: rgba(255,255,255,0.03); 
+    color: var(--text); 
+    transition: all 0.18s ease;
+}
+.stButton > button:hover, .stDownloadButton > button:hover { 
+    border-color: rgba(139,92,246,0.6); 
+    color: #fff; 
+    transform: translateY(-1px); 
+}
+.stButton > button[kind="primary"], .stDownloadButton > button[kind="primary"], .stFormSubmitButton > button {
+    background: var(--grad); 
+    border: none; 
+    color: #fff; 
+    box-shadow: 0 6px 20px rgba(99,102,241,0.28);
+}
+.stButton > button[kind="primary"]:hover { 
+    box-shadow: 0 8px 28px rgba(34,211,238,0.35); 
+    filter: brightness(1.07); 
+}
+
+/* Inputs */
+div[data-baseweb="input"], div[data-baseweb="select"] > div, div[data-baseweb="textarea"] {
+    background: var(--bg-1) !important; 
+    border-radius: 10px !important; 
+    border-color: var(--line-strong) !important;
+}
+div[data-testid="stExpander"] details { 
+    border: 1px solid var(--line) !important; 
+    border-radius: 12px !important; 
+    background: rgba(255,255,255,0.015); 
+}
+div[data-testid="stMetric"] { 
+    background: rgba(255,255,255,0.02); 
+    border: 1px solid var(--line); 
+    border-radius: 12px; 
+    padding: 10px 14px; 
+}
+div[data-testid="stMetricValue"] { 
+    font-family: 'Outfit', sans-serif; 
+}
+div[data-testid="stSidebar"] { 
+    background: var(--bg-1); 
+    border-right: 1px solid var(--line); 
+}
+video { 
+    border-radius: 12px; 
+}
+
+/* Badges */
+.cf-badge { 
+    display: inline-block; 
+    font-size: 0.72rem; 
+    font-weight: 700; 
+    letter-spacing: 0.03em; 
+    padding: 3px 10px;
+    border-radius: 999px; 
+    margin-right: 6px; 
+    border: 1px solid var(--line-strong); 
+    color: var(--muted); 
+}
+.cf-badge.ok { 
+    color: var(--ok); 
+    border-color: rgba(52,211,153,0.4); 
+    background: rgba(52,211,153,0.08); 
+}
+.cf-badge.bad { 
+    color: var(--bad); 
+    border-color: rgba(248,113,113,0.4); 
+    background: rgba(248,113,113,0.08); 
+}
+.cf-badge.warn { 
+    color: var(--warn); 
+    border-color: rgba(251,191,36,0.4); 
+    background: rgba(251,191,36,0.08); 
+}
+.cf-badge.accent { 
+    color: #fff; 
+    border: none; 
+    background: var(--grad); 
+}
+.cf-score { 
+    font-family: 'Outfit', sans-serif; 
+    font-weight: 700; 
+    font-size: 0.95rem; 
+    background: var(--grad);
+    -webkit-background-clip: text; 
+    -webkit-text-fill-color: transparent; 
+}
+
+/* Reaction cam mock */
+.cf-mock-wrap { 
+    display: flex; 
+    justify-content: center; 
+}
+.cf-mock { 
+    position: relative; 
+    width: 150px; 
+    aspect-ratio: 9/16; 
+    border-radius: 16px; 
+    overflow: hidden;
+    background: linear-gradient(160deg, #1f2433, #0f121a); 
+    border: 1px solid var(--line-strong);
+    box-shadow: 0 14px 40px rgba(0,0,0,0.45); 
+}
+.cf-mock .hook { 
+    position: absolute; 
+    top: 9%; 
+    left: 10%; 
+    right: 10%; 
+    height: 7%; 
+    border-radius: 4px; 
+    background: rgba(255,255,255,0.18); 
+}
+.cf-mock .vid { 
+    position: absolute; 
+    top: 30%; 
+    left: 0; 
+    right: 0; 
+    height: 32%; 
+    background: rgba(139,92,246,0.18); 
+}
+.cf-mock .cap { 
+    position: absolute; 
+    left: 15%; 
+    right: 15%; 
+    height: 5%; 
+    border-radius: 3px; 
+    background: rgba(251,191,36,0.6); 
+    transition: bottom 0.3s ease; 
+}
+.cf-mock .cam { 
+    position: absolute; 
+    background: var(--grad); 
+    opacity: 0.92; 
+    transition: all 0.3s ease; 
+}
+.cf-mock .cam.border { 
+    box-shadow: 0 0 0 2px #fff; 
+}

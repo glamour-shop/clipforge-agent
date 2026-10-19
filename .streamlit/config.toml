@@ -1,0 +1,4 @@
+[server]
+maxMessageSize = 2048
+maxUploadSize = 2048
+enableStaticServing = true
