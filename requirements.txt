@@ -1,25 +1,5 @@
-# ClipForge Requirements
-# Core & UI
-streamlit>=1.35.0
-pandas>=2.2.0
-python-dotenv>=1.0.1
-requests>=2.31.0
-pillow>=10.3.0
-
-# YouTube API
-google-api-python-client>=2.130.0
-google-auth-oauthlib>=1.2.0
-google-auth-httplib2>=0.2.0
-
-# Rights & Downloader (Phase 2)
-yt-dlp>=2024.5.27
-
-# Audio & Video Processing (Phases 3-4)
-scenedetect[opencv]>=0.6.4
-faster-whisper>=1.0.0
-av<14
-librosa>=0.10.2
-soundfile>=0.12.1
-
-# AI & LLM Ranking (Phase 3)
-google-generativeai>=0.7.0
+# Cloudflare Workers Builds note:
+# The Cloudflare Worker runs via Node.js/Wrangler (worker.js & package.json).
+# No Python packages are required to build the Cloudflare Worker.
+# For the local Streamlit + FFmpeg desktop studio, run:
+#   pip install -r requirements-local.txt
