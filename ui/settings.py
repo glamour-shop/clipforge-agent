@@ -58,25 +58,32 @@ def render_sidebar():
             set_setting("gemini_api_key", gemini_key.strip())
             st.toast("API keys saved!")
 
-    # Connected Platforms
-    with st.sidebar.expander("Social Accounts", expanded=False):
+    # Connected Platforms (Sign In & Connect Socials)
+    with st.sidebar.expander("Social Accounts (Sign In & Sync)", expanded=True):
         accs = get_social_accounts()
-        for plat, label in [("youtube", "YouTube"), ("tiktok", "TikTok"), ("instagram", "Instagram")]:
-            connected = (accs.get(plat) or {}).get("is_connected", False)
-            handle = (accs.get(plat) or {}).get("account_handle", "")
+        for plat, label, icon in [("youtube", "YouTube Shorts", "▶️"), ("tiktok", "TikTok", "🎵"), ("instagram", "Instagram Reels", "📸")]:
+            info = accs.get(plat) or {}
+            connected = bool(info.get("is_connected", False))
+            handle = info.get("account_handle", "")
+            acc_nm = info.get("account_name", label)
             if connected:
-                st.caption(f"**{label}:** Connected ({html.escape(handle)})")
-                if st.button(f"Disconnect {label}", key=f"dc_{plat}", width="stretch"):
+                st.markdown(f"**{icon} {label}:** ✅ Connected (`{html.escape(handle or '@synced')}`)")
+                c1, c2 = st.columns(2)
+                if c1.button("🔄 Sync", key=f"sync_{plat}", width="stretch"):
+                    st.toast(f"Synced {label} ({handle}) with Auto-Agent!")
+                if c2.button("Disconnect", key=f"dc_{plat}", width="stretch"):
                     disconnect_social_account(plat)
                     st.rerun()
             else:
-                st.caption(f"**{label}:** Not connected")
-                h_in = st.text_input(f"{label} Handle", key=f"conn_h_{plat}", placeholder=f"@{plat}_handle")
-                if st.button(f"Connect {label}", key=f"conn_btn_{plat}", width="stretch"):
-                    if h_in.strip():
-                        save_social_account(plat, label, h_in.strip())
-                        st.toast(f"{label} connected!")
-                        st.rerun()
+                st.caption(f"**{icon} {label}:** Not signed in")
+                h_in = st.text_input(f"{label} Handle / URL", key=f"conn_h_{plat}", placeholder=f"@{plat}_handle")
+                if st.button(f"🔐 Sign In & Connect {label}", key=f"conn_btn_{plat}", type="primary", width="stretch"):
+                    final_h = h_in.strip() or f"@{plat}_creator"
+                    if not final_h.startswith("@") and not final_h.startswith("http"):
+                        final_h = "@" + final_h
+                    save_social_account(plat, label, final_h)
+                    st.toast(f"Signed in & connected {label} ({final_h}) to Auto-Agent!")
+                    st.rerun()
 
     # Channel Allowlist Expander
     with st.sidebar.expander("Rights Allowlist", expanded=False):

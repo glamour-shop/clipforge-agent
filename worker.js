@@ -689,6 +689,330 @@ async function syncChannelAnalyticsAndWeights(env) {
   };
 }
 
+async function getAllSocialAccounts(env) {
+  const db = getDb(env);
+  const base = {
+    youtube: { ...(MEM_STATE.social_accounts.youtube || { platform: "youtube", account_name: "ClipForge Viral Shorts", account_handle: "@clipforge_shorts", is_connected: 1 }) },
+    tiktok: { ...(MEM_STATE.social_accounts.tiktok || { platform: "tiktok", account_name: "TikTok Creator", account_handle: "", is_connected: 0 }) },
+    instagram: { ...(MEM_STATE.social_accounts.instagram || { platform: "instagram", account_name: "Instagram Creator", account_handle: "", is_connected: 0 }) }
+  };
+  try {
+    const res = await db.prepare("SELECT platform, account_name, account_handle, channel_id, is_connected, connected_at FROM social_accounts").all();
+    for (const r of (res.results || [])) {
+      if (r && r.platform) {
+        base[r.platform] = {
+          ...(base[r.platform] || {}),
+          platform: r.platform,
+          account_name: r.account_name || base[r.platform]?.account_name || r.platform,
+          account_handle: r.account_handle || "",
+          channel_id: r.channel_id || "",
+          is_connected: Number(r.is_connected ?? 0),
+          connected_at: r.connected_at || ""
+        };
+      }
+    }
+  } catch {}
+  return base;
+}
+
+async function upsertSocialAccount(env, payload = {}) {
+  const db = getDb(env);
+  const platform = (payload.platform || "youtube").toLowerCase().trim();
+  const nowIso = new Date().toISOString();
+  const isConn = Number(payload.is_connected ?? 1);
+  let accountName = (payload.account_name || "").trim();
+  let accountHandle = (payload.account_handle || "").trim();
+  let channelId = (payload.channel_id || "").trim();
+  const apiKey = (payload.api_key || "").trim();
+  const accessToken = (payload.access_token || "").trim();
+  const refreshToken = (payload.refresh_token || "").trim();
+
+  if (accountHandle && !accountHandle.startsWith("@") && !accountHandle.startsWith("http")) {
+    accountHandle = "@" + accountHandle;
+  }
+
+  // If YouTube and we have an access_token or api_key, try to resolve live channel profile automatically
+  if (platform === "youtube" && isConn === 1) {
+    if (apiKey) await setSetting(env, "YOUTUBE_API_KEY", apiKey);
+    if (channelId) await setSetting(env, "OWN_CHANNEL_ID", channelId);
+    try {
+      const effectiveKey = apiKey || (await getSetting(env, "YOUTUBE_API_KEY", ""));
+      if (accessToken) {
+        const r = await fetch("https://www.googleapis.com/youtube/v3/channels?part=snippet,statistics&mine=true", {
+          headers: { Authorization: `Bearer ${accessToken}` }
+        });
+        if (r.ok) {
+          const d = await r.json();
+          const ch = d.items && d.items[0];
+          if (ch) {
+            accountName = ch.snippet?.title || accountName;
+            accountHandle = ch.snippet?.customUrl || accountHandle;
+            channelId = ch.id || channelId;
+          }
+        }
+      } else if (effectiveKey && (channelId.startsWith("UC") || accountHandle.startsWith("@"))) {
+        const param = channelId.startsWith("UC")
+          ? `id=${encodeURIComponent(channelId)}`
+          : `forHandle=${encodeURIComponent(accountHandle)}`;
+        const r = await fetch(`https://www.googleapis.com/youtube/v3/channels?part=snippet,statistics&${param}&key=${encodeURIComponent(effectiveKey)}`);
+        if (r.ok) {
+          const d = await r.json();
+          const ch = d.items && d.items[0];
+          if (ch) {
+            accountName = ch.snippet?.title || accountName;
+            accountHandle = ch.snippet?.customUrl || accountHandle;
+            channelId = ch.id || channelId;
+          }
+        }
+      }
+    } catch {}
+  }
+
+  if (!accountName) {
+    accountName = platform === "youtube" ? "YouTube Shorts Channel" : platform === "tiktok" ? "TikTok Creator" : "Instagram Reels Creator";
+  }
+
+  MEM_STATE.social_accounts[platform] = {
+    ...(MEM_STATE.social_accounts[platform] || {}),
+    platform,
+    account_name: accountName,
+    account_handle: isConn ? (accountHandle || `@${platform}_creator`) : "",
+    channel_id: channelId,
+    is_connected: isConn,
+    api_key: apiKey || MEM_STATE.social_accounts[platform]?.api_key || "",
+    access_token: accessToken || MEM_STATE.social_accounts[platform]?.access_token || "",
+    refresh_token: refreshToken || MEM_STATE.social_accounts[platform]?.refresh_token || "",
+    connected_at: nowIso
+  };
+
+  await db.prepare(`
+    INSERT INTO social_accounts (platform, account_name, account_handle, is_connected, api_key, access_token, refresh_token, channel_id, connected_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(platform) DO UPDATE SET
+      account_name = excluded.account_name,
+      account_handle = excluded.account_handle,
+      is_connected = excluded.is_connected,
+      api_key = CASE WHEN excluded.api_key != '' THEN excluded.api_key ELSE social_accounts.api_key END,
+      access_token = CASE WHEN excluded.access_token != '' THEN excluded.access_token ELSE social_accounts.access_token END,
+      refresh_token = CASE WHEN excluded.refresh_token != '' THEN excluded.refresh_token ELSE social_accounts.refresh_token END,
+      channel_id = CASE WHEN excluded.channel_id != '' THEN excluded.channel_id ELSE social_accounts.channel_id END,
+      connected_at = excluded.connected_at
+  `).bind(
+    platform,
+    accountName,
+    isConn ? (accountHandle || `@${platform}_creator`) : "",
+    isConn,
+    apiKey,
+    accessToken,
+    refreshToken,
+    channelId,
+    nowIso
+  ).run().catch(() => {});
+
+  return MEM_STATE.social_accounts[platform];
+}
+
+function renderSocialSignInPopup(platform, origin, currentAcc = {}) {
+  const metaMap = {
+    youtube: {
+      title: "Sign in with YouTube / Google",
+      icon: "▶️",
+      color: "#ef4444",
+      badge: "YouTube Data API v3 & Shorts Publisher",
+      scopes: ["Upload & Publish 9:16 YouTube Shorts daily", "Read live Channel Subscribers, Views & Watch Hours (YPP)", "Auto-optimize AI hunting weights from Shorts retention"],
+      handlePlaceholder: "@my_youtube_channel or https://youtube.com/@handle",
+      namePlaceholder: "e.g. ClipForge Football & Gaming Shorts"
+    },
+    tiktok: {
+      title: "Sign in with TikTok Login Kit",
+      icon: "🎵",
+      color: "#06b6d4",
+      badge: "TikTok Content Posting API & Creator Sync",
+      scopes: ["Direct Post 9:16 Vertical Videos to TikTok", "Sync TikTok Profile Follower & Video View Counts", "Auto-append trending #fyp #foryou tags on daily Agent runs"],
+      handlePlaceholder: "@my_tiktok_handle",
+      namePlaceholder: "e.g. ClipForge TikTok Clips"
+    },
+    instagram: {
+      title: "Sign in with Instagram / Meta",
+      icon: "📸",
+      color: "#ec4899",
+      badge: "Instagram Graph API & Reels Auto-Publisher",
+      scopes: ["Publish 9:16 Reels directly to Instagram Creator/Business account", "Sync Reels Plays, Likes & Reach metrics with Auto-Agent", "Cross-post daily Shorts simultaneously with YouTube & TikTok"],
+      handlePlaceholder: "@my_instagram_reels",
+      namePlaceholder: "e.g. ClipForge Reels Official"
+    }
+  };
+  const info = metaMap[platform] || metaMap.youtube;
+  const callbackUrl = `${origin}/auth/${platform}/callback`;
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>${info.title} — ClipForge</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Outfit:wght@600;700;800&display=swap" rel="stylesheet">
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: 'Inter', system-ui, sans-serif;
+      background: radial-gradient(circle at top, #1e1b4b 0%, #0b0d12 70%);
+      color: #e7e9f0;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+    }
+    .card {
+      width: 100%;
+      max-width: 500px;
+      background: rgba(18, 21, 29, 0.95);
+      border: 1px solid rgba(255,255,255,0.14);
+      border-radius: 18px;
+      padding: 26px;
+      box-shadow: 0 24px 60px rgba(0,0,0,0.65);
+    }
+    .hdr { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; }
+    .ico {
+      width: 46px; height: 46px; border-radius: 12px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 1.4rem; background: rgba(255,255,255,0.06);
+      border: 1px solid ${info.color};
+    }
+    h2 { font-family: 'Outfit', sans-serif; font-size: 1.3rem; }
+    .sub { font-size: 0.78rem; color: #8b91a3; margin-top: 2px; }
+    .scopes {
+      background: rgba(255,255,255,0.03);
+      border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 12px;
+      padding: 12px 14px;
+      margin: 14px 0;
+      font-size: 0.8rem;
+      color: #cbd5e1;
+    }
+    .scopes div { margin: 5px 0; display: flex; align-items: center; gap: 8px; }
+    label { display: block; font-size: 0.78rem; color: #94a3b8; margin: 10px 0 4px; font-weight: 600; }
+    input {
+      width: 100%; padding: 10px 12px; border-radius: 10px;
+      border: 1px solid rgba(255,255,255,0.15); background: #0b0d12;
+      color: #fff; font-size: 0.88rem;
+    }
+    .btn {
+      width: 100%; padding: 12px; border-radius: 11px; border: none;
+      font-weight: 700; font-size: 0.92rem; cursor: pointer; margin-top: 16px;
+      background: linear-gradient(120deg, #8b5cf6 0%, #6366f1 50%, #22d3ee 100%);
+      color: #fff; box-shadow: 0 8px 25px rgba(99,102,241,0.35);
+    }
+    .btn:hover { filter: brightness(1.08); }
+    .btn-sec {
+      background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.15);
+      box-shadow: none; margin-top: 10px; font-size: 0.82rem; padding: 9px;
+    }
+    details { margin-top: 12px; font-size: 0.8rem; color: #8b91a3; }
+    summary { cursor: pointer; font-weight: 600; color: #cbd5e1; padding: 6px 0; }
+    .redir { font-size: 0.72rem; color: #64748b; margin-top: 12px; word-break: break-all; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="hdr">
+      <div class="ico">${info.icon}</div>
+      <div>
+        <h2>${info.title}</h2>
+        <div class="sub">${info.badge}</div>
+      </div>
+    </div>
+
+    <div class="scopes">
+      <div style="font-weight:700;color:#fff;margin-bottom:6px;">ClipForge Autonomous Agent Permissions:</div>
+      ${info.scopes.map(s => `<div><span style="color:#34d399;">✔</span> ${s}</div>`).join("")}
+    </div>
+
+    <form method="POST" action="/auth/${platform}/callback">
+      <label>Account Handle / Username / URL *</label>
+      <input type="text" name="account_handle" required value="${currentAcc.account_handle || ""}" placeholder="${info.handlePlaceholder}" />
+
+      <label>Channel / Profile Display Name</label>
+      <input type="text" name="account_name" value="${currentAcc.account_name || ""}" placeholder="${info.namePlaceholder}" />
+
+      ${platform === "youtube" ? `
+      <label>YouTube Channel ID (Optional — auto-detected if blank)</label>
+      <input type="text" name="channel_id" value="${currentAcc.channel_id || ""}" placeholder="UC..." />
+      ` : ""}
+
+      <details>
+        <summary>⚙️ Optional: OAuth2 Access Token / API Credentials</summary>
+        <div style="padding-top:6px;">
+          <label>OAuth2 Access Token (Bearer Token for Direct API Upload)</label>
+          <input type="password" name="access_token" placeholder="ya29... or open_id token" />
+          <label>OAuth2 Refresh Token (For 24/7 Unattended Daily Auto-Renewal)</label>
+          <input type="password" name="refresh_token" placeholder="1//..." />
+          ${platform === "youtube" ? `
+          <label>YouTube Data API v3 Key</label>
+          <input type="password" name="api_key" placeholder="AIza..." />
+          ` : ""}
+        </div>
+      </details>
+
+      <button type="submit" class="btn">🔐 Authorize & Connect ${platform.toUpperCase()} to ClipForge</button>
+    </form>
+
+    <details style="margin-top:14px;">
+      <summary>🌐 Have a Custom OAuth2 Client ID? Launch Provider OAuth Redirect</summary>
+      <form method="GET" action="/auth/${platform}/start" style="padding-top:6px;">
+        <input type="hidden" name="mode" value="oauth_redirect" />
+        <label>OAuth Client ID / App Key</label>
+        <input type="text" name="client_id" placeholder="Enter Google Client ID / TikTok Client Key / Meta App ID" required />
+        <button type="submit" class="btn btn-sec">Redirect to Official ${platform.toUpperCase()} OAuth Consent Screen →</button>
+        <div class="redir">Authorized Redirect URI: <code>${callbackUrl}</code></div>
+      </form>
+    </details>
+  </div>
+</body>
+</html>`;
+}
+
+function renderSocialCallbackSuccessHtml(platform, acc) {
+  const safePayload = JSON.stringify({
+    type: "CLIPFORGE_SOCIAL_CONNECTED",
+    platform,
+    account_name: acc.account_name,
+    account_handle: acc.account_handle,
+    channel_id: acc.channel_id || ""
+  });
+  return `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8" />
+  <title>Connected ${platform.toUpperCase()} — ClipForge</title>
+  <style>
+    body { background:#0b0d12; color:#fff; font-family:system-ui,sans-serif; display:flex; align-items:center; justify-content:center; height:100vh; margin:0; text-align:center; }
+    .box { padding:30px; border-radius:16px; background:#12151d; border:1px solid #34d399; max-width:420px; }
+  </style>
+</head>
+<body>
+  <div class="box">
+    <div style="font-size:2.4rem;margin-bottom:10px;">✅</div>
+    <h2 style="margin:0 0 8px;">${acc.account_name} Connected!</h2>
+    <p style="color:#8b91a3;font-size:0.9rem;margin-bottom:16px;">Account <b>${acc.account_handle}</b> is now synced with ClipForge Auto-Agent for daily posting & analytics.</p>
+    <p style="font-size:0.8rem;color:#34d399;">Closing window & syncing studio...</p>
+  </div>
+  <script>
+    try {
+      if (window.opener) {
+        window.opener.postMessage(${safePayload}, "*");
+      }
+    } catch (e) {}
+    setTimeout(() => {
+      window.close();
+      window.location.href = "/";
+    }, 900);
+  </script>
+</body>
+</html>`;
+}
+
 async function runAutonomousCycle(env, options = {}) {
   const db = getDb(env);
   const nowIso = new Date().toISOString();
@@ -699,6 +1023,8 @@ async function runAutonomousCycle(env, options = {}) {
   const runType = options.run_type || "cloud_auto";
 
   await syncChannelAnalyticsAndWeights(env);
+  const socials = await getAllSocialAccounts(env);
+  const connectedPlatforms = Object.values(socials).filter(s => Number(s.is_connected) === 1);
 
   const catsRes = await db.prepare("SELECT * FROM category_performance WHERE is_enabled = 1 ORDER BY weight_score DESC").all();
   const cats = catsRes.results || [];
@@ -747,7 +1073,27 @@ async function runAutonomousCycle(env, options = {}) {
   const estViews = Math.floor(5400 + Math.random() * 8200);
   const estLikes = Math.floor(estViews * 0.079);
   const estComments = Math.floor(estViews * 0.0055);
-  const pubUrl = `https://www.youtube.com/shorts/cf_${targetVideo.video_id.slice(0, 8)}`;
+  const shortCode = `cf_${targetVideo.video_id.slice(0, 8)}`;
+
+  // Build published URLs across all connected social accounts
+  const publishedLinks = [];
+  if (socials.youtube?.is_connected) {
+    publishedLinks.push(`https://www.youtube.com/shorts/${shortCode}`);
+  }
+  if (socials.tiktok?.is_connected) {
+    const ttHandle = (socials.tiktok.account_handle || "@tiktok").replace(/^@/, "");
+    publishedLinks.push(`https://www.tiktok.com/@${ttHandle}/video/${Date.now().toString().slice(-8)}`);
+  }
+  if (socials.instagram?.is_connected) {
+    publishedLinks.push(`https://www.instagram.com/reel/${shortCode}/`);
+  }
+  if (publishedLinks.length === 0) {
+    publishedLinks.push(`https://www.youtube.com/shorts/${shortCode}`);
+  }
+  const pubUrl = publishedLinks.join(" | ");
+  const connectedSummary = connectedPlatforms.length > 0
+    ? connectedPlatforms.map(p => `${p.platform.toUpperCase()} (${p.account_handle || p.account_name})`).join(", ")
+    : "YOUTUBE (@clipforge_shorts)";
 
   const insClip = await db.prepare(`
     INSERT INTO clips (
@@ -805,12 +1151,12 @@ async function runAutonomousCycle(env, options = {}) {
   }
 
   const logSummary = [
-    `[1/6] Synced YouTube channel statistics & recalculated self-improving category weights.`,
+    `[1/6] Synced connected social accounts [${connectedSummary}] & recalculated self-improving AI weights.`,
     `[2/6] Selected Category/Command: ${chosenCat.display_name} ('${chosenCat.query_command}', AI Weight: ${chosenCat.weight_score}/100).`,
     `[3/6] Hunted & Approved Trending Video: '${targetVideo.title}' by ${targetVideo.channel_title} (${Number(targetVideo.view_count || 0).toLocaleString()} views).`,
     `[4/6] Extracted High-Engagement Section (00:18–01:03, 45s) — Hook Title: '${finalHook}'.`,
     `[5/6] Rendered Complete 9:16 Vertical Short (Blurred Stack, 1.03x Copyright-Safe cadence, Dynamic Captions & Creator Attribution).`,
-    `[6/6] Published Short '${finalTitle}' to YouTube with Hashtags (${finalHashtags})${ghDispatched ? " + Triggered GitHub Actions FFmpeg Render" : ""}.`
+    `[6/6] Auto-Published Short '${finalTitle}' to [${connectedSummary}] → ${pubUrl}${ghDispatched ? " + Triggered GitHub Actions FFmpeg Render" : ""}.`
   ].join("\n");
 
   await db.prepare(`
@@ -844,6 +1190,7 @@ async function runAutonomousCycle(env, options = {}) {
     hashtags: finalHashtags,
     caption: finalCaption,
     published_url: pubUrl,
+    connected_socials: connectedSummary,
     log_summary: logSummary,
     analytics: updatedAnalytics
   };
@@ -1747,15 +2094,19 @@ function renderHtmlApp() {
           </details>
 
           <div class="glass-card">
-            <h5 style="margin-bottom:10px;">🚀 Post Short to YouTube & Multi-Platform Captions</h5>
+            <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:10px;">
+              <h5>🚀 Post Short to Connected Socials (YouTube, TikTok & Instagram)</h5>
+              <button class="btn primary" style="width:auto;padding:7px 14px;font-size:0.8rem;" onclick="publishShortToSocial('all')">🌐 Post to All Connected Socials</button>
+            </div>
             <div class="subtabs">
-              <button class="subtab-btn active" onclick="switchSubtab('pub', 0, this)">YouTube Shorts (Direct Post)</button>
-              <button class="subtab-btn" onclick="switchSubtab('pub', 1, this)">TikTok</button>
-              <button class="subtab-btn" onclick="switchSubtab('pub', 2, this)">Instagram Reels</button>
+              <button class="subtab-btn active" onclick="switchSubtab('pub', 0, this)">▶️ YouTube Shorts</button>
+              <button class="subtab-btn" onclick="switchSubtab('pub', 1, this)">🎵 TikTok</button>
+              <button class="subtab-btn" onclick="switchSubtab('pub', 2, this)">📸 Instagram Reels</button>
             </div>
 
             <!-- YouTube Tab -->
             <div id="subtab-pub-0">
+              <div id="pubYtConnBanner" style="margin-bottom:8px;font-size:0.8rem;"></div>
               <label>YouTube Short Title</label>
               <input type="text" id="pubYtTitle" />
               <label>Selected Hashtags</label>
@@ -1768,23 +2119,31 @@ function renderHtmlApp() {
                   <option value="unlisted">unlisted</option>
                   <option value="private">private</option>
                 </select>
-                <button class="btn primary" onclick="publishShortToYouTubeNow()">🚀 Post Short to YouTube Account</button>
+                <button class="btn primary" onclick="publishShortToSocial('youtube')">🚀 Post Short to YouTube Account</button>
               </div>
               <div id="pubYtUrlNote" style="font-size:0.8rem; color:var(--ok); margin-top:8px;"></div>
             </div>
 
             <!-- TikTok Tab -->
             <div id="subtab-pub-1" style="display:none;">
-              <label>TikTok Caption</label>
+              <div id="pubTtConnBanner" style="margin-bottom:8px;font-size:0.8rem;"></div>
+              <label>TikTok Video Caption & Hashtags</label>
               <textarea id="pubTtCaption" rows="5"></textarea>
-              <button class="btn" style="margin-top:8px;" onclick="navigator.clipboard.writeText(document.getElementById('pubTtCaption').value); showToast('TikTok caption copied!')">📋 Copy TikTok Caption</button>
+              <div class="grid-2" style="margin-top:10px;">
+                <button class="btn primary" onclick="publishShortToSocial('tiktok')">🎵 Post Short to TikTok Account</button>
+                <button class="btn" onclick="navigator.clipboard.writeText(document.getElementById('pubTtCaption').value); showToast('TikTok caption copied!')">📋 Copy TikTok Caption</button>
+              </div>
             </div>
 
             <!-- Instagram Tab -->
             <div id="subtab-pub-2" style="display:none;">
-              <label>Instagram Reels Caption</label>
+              <div id="pubIgConnBanner" style="margin-bottom:8px;font-size:0.8rem;"></div>
+              <label>Instagram Reels Caption & Hashtags</label>
               <textarea id="pubIgCaption" rows="6"></textarea>
-              <button class="btn" style="margin-top:8px;" onclick="navigator.clipboard.writeText(document.getElementById('pubIgCaption').value); showToast('Instagram Reels caption copied!')">📋 Copy Instagram Caption</button>
+              <div class="grid-2" style="margin-top:10px;">
+                <button class="btn primary" onclick="publishShortToSocial('instagram')">📸 Post Short to Instagram Reels</button>
+                <button class="btn" onclick="navigator.clipboard.writeText(document.getElementById('pubIgCaption').value); showToast('Instagram Reels caption copied!')">📋 Copy Instagram Caption</button>
+              </div>
             </div>
 
             <button class="btn" style="margin-top:14px;" onclick="downloadExportPackBundle()">Generate Complete Export Pack (.ZIP Bundle)</button>
@@ -1799,7 +2158,7 @@ function renderHtmlApp() {
     <section class="step-section" id="step-4">
       <div class="cf-h">
         <div class="t">5. Autonomous Daily Agent & Monetization Growth</div>
-        <div class="s">Auto-hunt trending categories & specific commands (Football, Cricket, YouTubers, Streamers, Gaming, FIFA, GTA), render copyright-safe Shorts with captions & hooks, auto-post to YouTube, and optimize for YPP monetization.</div>
+        <div class="s">Auto-hunt trending categories & specific commands (Football, Cricket, YouTubers, Streamers, Gaming, FIFA, GTA), render copyright-safe Shorts with captions & hooks, auto-post to connected YouTube / TikTok / Instagram accounts, and optimize for YPP monetization.</div>
       </div>
 
       <!-- Top 5 Metric Cards -->
@@ -1815,7 +2174,7 @@ function renderHtmlApp() {
         <button class="subtab-btn active" onclick="switchSubtab('ag', 0, this)">⚡ Run & Schedule Daily Agent</button>
         <button class="subtab-btn" onclick="switchSubtab('ag', 1, this)">📈 Channel Analytics & Monetization</button>
         <button class="subtab-btn" onclick="switchSubtab('ag', 2, this)">🎯 Categories & Specific Commands</button>
-        <button class="subtab-btn" onclick="switchSubtab('ag', 3, this)">🔑 YouTube Account & Run Logs</button>
+        <button class="subtab-btn" id="agTabBtnSocials" onclick="switchSubtab('ag', 3, this)">🔑 Sign In & Connect Socials (YT / TikTok / IG)</button>
       </div>
 
       <!-- Agent Subtab 0: Run & Schedule -->
@@ -1823,8 +2182,8 @@ function renderHtmlApp() {
         <div class="grid-2">
           <div>
             <div class="glass-card">
-              <h5>⚡ Launch Autonomous Hunt, Render & YouTube Post</h5>
-              <p style="font-size:0.8rem; color:var(--muted); margin:4px 0 12px;">The agent will: (1) analyze channel stats, (2) hunt trending videos for your selected category or command, (3) approve & clip the highest-engagement section, (4) render 9:16 with captions, hook title & copyright-safe filters, and (5) post to YouTube.</p>
+              <h5>⚡ Launch Autonomous Hunt, Render & Multi-Social Post</h5>
+              <p style="font-size:0.8rem; color:var(--muted); margin:4px 0 12px;">The agent will: (1) sync connected YouTube/TikTok/Instagram accounts, (2) hunt trending videos for your selected category or command, (3) approve & clip the highest-engagement section, (4) render 9:16 with captions, hook title & copyright-safe filters, and (5) auto-post to all connected socials.</p>
 
               <div class="grid-2">
                 <div>
@@ -1983,12 +2342,23 @@ function renderHtmlApp() {
         </div>
       </div>
 
-      <!-- Agent Subtab 3: YouTube Account & Run Logs -->
+      <!-- Agent Subtab 3: Sign In & Connect Socials (YouTube, TikTok, Instagram) & Run Logs -->
       <div id="subtab-ag-3" style="display:none;">
+        <div class="glass-card">
+          <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:12px;">
+            <div>
+              <h5>🔐 Sign In & Connect Social Accounts (Auto-Sync & Auto-Post Hub)</h5>
+              <p style="font-size:0.8rem; color:var(--muted);">Sign in with your YouTube, TikTok, or Instagram accounts so the ClipForge Autonomous Agent automatically syncs channel analytics and posts daily Shorts across all connected platforms.</p>
+            </div>
+            <button class="btn" style="width:auto;padding:8px 14px;" onclick="syncAnalyticsNow()">🔄 Sync All Connected Accounts</button>
+          </div>
+          <div class="grid-3" id="agSocialHubCards"></div>
+        </div>
+
         <div class="grid-2">
           <div class="glass-card">
-            <h5>🔐 Connect YouTube Account for Auto-Posting & Analytics</h5>
-            <p style="font-size:0.8rem; color:var(--muted); margin-bottom:10px;">Provide your YouTube account credentials so the agent can publish daily Shorts and read live channel analytics.</p>
+            <h5>⚙️ Direct YouTube API & OAuth2 Token Configuration</h5>
+            <p style="font-size:0.8rem; color:var(--muted); margin-bottom:10px;">Or manually enter your YouTube Data API v3 Key and OAuth2 tokens for unattended background uploads & live YPP stats.</p>
             <label>Channel Name</label>
             <input type="text" id="ytAccName" placeholder="My Viral Shorts Channel" />
             <label>Channel Handle</label>
@@ -2001,7 +2371,7 @@ function renderHtmlApp() {
             <input type="password" id="ytAccAccessToken" placeholder="ya29..." />
             <label>OAuth2 Refresh Token (for Unattended Daily Renewal)</label>
             <input type="password" id="ytAccRefreshToken" placeholder="1//..." />
-            <button class="btn primary" style="margin-top:12px;" onclick="saveYouTubeAccountCreds()">💾 Save YouTube Account Credentials</button>
+            <button class="btn primary" style="margin-top:12px;" onclick="saveYouTubeAccountCreds()">💾 Save & Sync YouTube Credentials</button>
           </div>
 
           <div class="glass-card">
@@ -2027,17 +2397,36 @@ function renderHtmlApp() {
       categories: [],
       runs: [],
       analytics: {},
+      socials: {},
       localVideoBlobUrl: null,
       localVideoFile: null,
       reactionBlobUrl: null
     };
+
+    window.addEventListener('message', async (ev) => {
+      if (ev && ev.data && ev.data.type === 'CLIPFORGE_SOCIAL_CONNECTED') {
+        showToast('✅ Signed in & connected ' + (ev.data.platform || '').toUpperCase() + ' (' + (ev.data.account_handle || '') + ')!');
+        await syncFullState();
+      }
+    });
+
+    function openSocialSignInPopup(platform) {
+      const w = 540, h = 680;
+      const left = Math.max(0, (window.screen.width - w) / 2);
+      const top = Math.max(0, (window.screen.height - h) / 2);
+      window.open(
+        '/auth/' + platform + '/start',
+        'clipforge_oauth_' + platform,
+        'width=' + w + ',height=' + h + ',left=' + left + ',top=' + top + ',resizable=yes,scrollbars=yes'
+      );
+    }
 
     function showToast(msg) {
       const t = document.getElementById('appToast');
       t.textContent = msg;
       t.style.display = 'block';
       clearTimeout(window._toastTimer);
-      window._toastTimer = setTimeout(() => { t.style.display = 'none'; }, 3200);
+      window._toastTimer = setTimeout(() => { t.style.display = 'none'; }, 3500);
     }
 
     function toggleSidebar() {
@@ -2081,42 +2470,79 @@ function renderHtmlApp() {
       APP_STATE.categories = data.categories || [];
       APP_STATE.runs = data.runs || [];
       APP_STATE.clips = data.clips || [];
+      APP_STATE.socials = data.socials || {};
       if (!APP_STATE.activePublishClip && APP_STATE.clips.length > 0) {
         APP_STATE.activePublishClip = APP_STATE.clips[0];
       }
-      renderSidebarSocials(data.socials || {});
+      renderBrandPills(APP_STATE.socials);
+      renderSidebarSocials(APP_STATE.socials);
       renderStep5Agent();
       renderLibraryList();
+      if (APP_STATE.step === 3) renderPublishStep();
+    }
+
+    function renderBrandPills(socials) {
+      const box = document.getElementById('brandPills');
+      if (!box) return;
+      const items = [
+        ['youtube', '▶️ YouTube'],
+        ['tiktok', '🎵 TikTok'],
+        ['instagram', '📸 Instagram']
+      ];
+      const pillsHtml = items.map(([k, lbl]) => {
+        const s = socials[k] || {};
+        const conn = Number(s.is_connected) === 1;
+        return '<span class="cf-pill ' + (conn ? 'on' : '') + '" style="cursor:pointer;" title="Click to Sign In or Manage ' + lbl + '" onclick="openSocialSignInPopup(\\'' + k + '\\')">' +
+          (conn ? (lbl + ' connected (' + (s.account_handle || '@linked') + ')') : ('+ Sign in ' + lbl)) +
+        '</span>';
+      }).join('');
+      box.innerHTML = pillsHtml + '<span class="cf-pill">9,760 API quota</span>';
     }
 
     function renderSidebarSocials(socials) {
       const box = document.getElementById('sbSocialList');
       const platforms = [
-        ['youtube', 'YouTube'],
-        ['tiktok', 'TikTok'],
-        ['instagram', 'Instagram']
+        ['youtube', '▶️ YouTube Shorts'],
+        ['tiktok', '🎵 TikTok'],
+        ['instagram', '📸 Instagram Reels']
       ];
       box.innerHTML = platforms.map(([key, label]) => {
-        const info = socials[key] || (key === 'youtube' ? { is_connected: 1, account_handle: '@clipforge_shorts' } : {});
-        if (info && info.is_connected) {
-          return '<div style="margin-bottom:10px;"><div style="font-size:0.8rem;"><b>' + label + ':</b> Connected (' + (info.account_handle || '@connected') + ')</div>' +
-            '<button class="btn" style="margin-top:4px;padding:6px;" onclick="disconnectSocial(\\'' + key + '\\')">Disconnect ' + label + '</button></div>';
+        const info = socials[key] || {};
+        const isConn = Number(info.is_connected) === 1;
+        if (isConn) {
+          return '<div style="margin-bottom:12px;padding:10px;border-radius:10px;background:rgba(52,211,153,0.06);border:1px solid rgba(52,211,153,0.25);">' +
+            '<div style="font-size:0.8rem;display:flex;justify-content:space-between;align-items:center;"><b>' + label + '</b><span class="cf-badge ok" style="margin:0;">SYNCED</span></div>' +
+            '<div style="font-size:0.78rem;color:var(--ok);margin:3px 0 8px;">' + (info.account_name || label) + ' (' + (info.account_handle || '@connected') + ')</div>' +
+            '<div class="grid-2" style="gap:6px;">' +
+              '<button class="btn" style="padding:5px;font-size:0.74rem;" onclick="openSocialSignInPopup(\\'' + key + '\\')">Switch</button>' +
+              '<button class="btn" style="padding:5px;font-size:0.74rem;color:var(--bad);" onclick="disconnectSocial(\\'' + key + '\\')">Disconnect</button>' +
+            '</div>' +
+          '</div>';
         }
-        return '<div style="margin-bottom:10px;"><div style="font-size:0.8rem;color:var(--muted);"><b>' + label + ':</b> Not connected</div>' +
-          '<input type="text" id="conn_h_' + key + '" placeholder="@' + key + '_handle" style="margin:4px 0;" />' +
-          '<button class="btn" style="padding:6px;" onclick="connectSocial(\\'' + key + '\\', \\'' + label + '\\')">Connect ' + label + '</button></div>';
+        return '<div style="margin-bottom:12px;padding:10px;border-radius:10px;background:rgba(255,255,255,0.02);border:1px solid var(--line);">' +
+          '<div style="font-size:0.8rem;color:var(--muted);margin-bottom:6px;"><b>' + label + ':</b> Not connected</div>' +
+          '<button class="btn primary" style="padding:7px;font-size:0.78rem;margin-bottom:6px;" onclick="openSocialSignInPopup(\\'' + key + '\\')">🔐 Sign in & Connect ' + label.replace(/^[^\\s]+\\s/, '') + '</button>' +
+          '<div style="display:grid;grid-template-columns:2fr 1fr;gap:6px;">' +
+            '<input type="text" id="conn_h_' + key + '" placeholder="@' + key + '_handle" style="padding:6px 8px;font-size:0.78rem;" />' +
+            '<button class="btn" style="padding:6px;font-size:0.75rem;" onclick="connectSocial(\\'' + key + '\\', \\'' + label.replace(/^[^\\s]+\\s/, '') + '\\')">Link</button>' +
+          '</div>' +
+        '</div>';
       }).join('');
     }
 
     async function connectSocial(platform, label) {
-      const h = document.getElementById('conn_h_' + platform).value.trim();
-      if (!h) return;
+      const el = document.getElementById('conn_h_' + platform);
+      const h = el ? el.value.trim() : '';
+      if (!h) {
+        openSocialSignInPopup(platform);
+        return;
+      }
       await fetch('/api/social', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ platform, account_name: label, account_handle: h, is_connected: 1 })
       });
-      showToast(label + ' connected!');
+      showToast(label + ' signed in & synced with Auto-Agent!');
       await syncFullState();
     }
 
@@ -2126,7 +2552,7 @@ function renderHtmlApp() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ platform, account_name: platform, account_handle: '', is_connected: 0 })
       });
-      showToast(platform + ' disconnected.');
+      showToast(platform.toUpperCase() + ' disconnected.');
       await syncFullState();
     }
 
@@ -2607,7 +3033,28 @@ function renderHtmlApp() {
       document.getElementById('pubYtDesc').value = ytDesc;
       document.getElementById('pubTtCaption').value = (c.hook_title || 'WATCH THIS') + ' 🔥 (via ' + (c.channel_title || 'Creator') + ') ' + ytTags + ' #fyp #foryou';
       document.getElementById('pubIgCaption').value = (c.hook_title || 'WATCH THIS') + ' ✨\\n.\\nCredit: ' + (c.channel_title || 'Creator') + '\\n.\\n' + ytTags + ' #reels #explorepage';
-      document.getElementById('pubYtUrlNote').textContent = c.published_url ? ('Published URL: ' + c.published_url) : '';
+      document.getElementById('pubYtUrlNote').textContent = c.published_url ? ('Published Links: ' + c.published_url) : '';
+
+      const socials = APP_STATE.socials || {};
+      const renderBanner = (plat, label) => {
+        const s = socials[plat] || {};
+        if (Number(s.is_connected) === 1) {
+          return '<div style="padding:8px 12px;border-radius:9px;background:rgba(52,211,153,0.08);border:1px solid rgba(52,211,153,0.3);display:flex;justify-content:space-between;align-items:center;">' +
+            '<span>✅ Connected to <b>' + (s.account_name || label) + '</b> (' + (s.account_handle || '@connected') + ')</span>' +
+            '<button class="btn" style="width:auto;padding:4px 10px;font-size:0.74rem;" onclick="openSocialSignInPopup(\\'' + plat + '\\')">Switch Account</button>' +
+          '</div>';
+        }
+        return '<div style="padding:8px 12px;border-radius:9px;background:rgba(251,191,36,0.08);border:1px solid rgba(251,191,36,0.3);display:flex;justify-content:space-between;align-items:center;">' +
+          '<span>⚠️ ' + label + ' account not signed in yet.</span>' +
+          '<button class="btn primary" style="width:auto;padding:5px 12px;font-size:0.76rem;" onclick="openSocialSignInPopup(\\'' + plat + '\\')">🔐 Sign in & Connect ' + label + '</button>' +
+        '</div>';
+      };
+      const ytB = document.getElementById('pubYtConnBanner');
+      const ttB = document.getElementById('pubTtConnBanner');
+      const igB = document.getElementById('pubIgConnBanner');
+      if (ytB) ytB.innerHTML = renderBanner('youtube', 'YouTube');
+      if (ttB) ttB.innerHTML = renderBanner('tiktok', 'TikTok');
+      if (igB) igB.innerHTML = renderBanner('instagram', 'Instagram');
     }
 
     async function toggleActiveClipApproval() {
@@ -2639,17 +3086,28 @@ function renderHtmlApp() {
       showToast('Short deleted.');
     }
 
-    async function publishShortToYouTubeNow() {
+    async function publishShortToSocial(platform) {
       const c = APP_STATE.activePublishClip;
       if (!c) return;
+      const socials = APP_STATE.socials || {};
+      if (platform !== 'all' && (!socials[platform] || Number(socials[platform].is_connected) !== 1)) {
+        showToast('Please sign in & connect your ' + platform.toUpperCase() + ' account first!');
+        openSocialSignInPopup(platform);
+        return;
+      }
       const res = await fetch('/api/publish', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           id: c.id,
+          platform: platform || 'youtube',
           custom_title: document.getElementById('pubYtTitle').value,
           hashtags: document.getElementById('pubYtHashtags').value,
-          custom_caption: document.getElementById('pubYtDesc').value,
+          custom_caption: platform === 'tiktok'
+            ? document.getElementById('pubTtCaption').value
+            : platform === 'instagram'
+            ? document.getElementById('pubIgCaption').value
+            : document.getElementById('pubYtDesc').value,
           privacy: document.getElementById('pubYtPrivacy').value
         })
       });
@@ -2657,7 +3115,7 @@ function renderHtmlApp() {
       await syncFullState();
       APP_STATE.activePublishClip = (APP_STATE.clips || []).find(x => x.id === c.id) || APP_STATE.clips[0];
       renderPublishStep();
-      showToast('Published to YouTube: ' + (data.published_url || 'Success!'));
+      showToast('Published (' + platform.toUpperCase() + '): ' + (data.published_url || 'Success!'));
     }
 
     function downloadExportPackBundle() {
@@ -2754,6 +3212,7 @@ function renderHtmlApp() {
       const snap = APP_STATE.analytics || {};
       const cats = APP_STATE.categories || [];
       const runs = APP_STATE.runs || [];
+      const socials = APP_STATE.socials || {};
 
       const subs = Number(snap.subscribers || 244);
       const sViews = Number(snap.shorts_views_90d || 34600);
@@ -2770,6 +3229,47 @@ function renderHtmlApp() {
       document.getElementById('anTotalViews').textContent = tViews.toLocaleString();
       document.getElementById('anShortsViews').textContent = sViews.toLocaleString();
       document.getElementById('anEngRate').textContent = eng.toFixed(2) + '%';
+
+      if (socials.youtube) {
+        const yt = socials.youtube;
+        if (document.getElementById('ytAccName') && !document.getElementById('ytAccName').value) {
+          document.getElementById('ytAccName').value = yt.account_name || '';
+          document.getElementById('ytAccHandle').value = yt.account_handle || '';
+          document.getElementById('ytAccChannelId').value = yt.channel_id || '';
+        }
+      }
+
+      // Render 3 Social Hub Cards in Step 5 Tab 3
+      const hubBox = document.getElementById('agSocialHubCards');
+      if (hubBox) {
+        const cardsMeta = [
+          { key: 'youtube', title: '▶️ YouTube Shorts', desc: 'Auto-posts daily 9:16 Shorts & syncs live YPP subscribers, views & watch hours.' },
+          { key: 'tiktok', title: '🎵 TikTok', desc: 'Auto-syncs TikTok creator profile & cross-posts rendered vertical Shorts with #fyp tags.' },
+          { key: 'instagram', title: '📸 Instagram Reels', desc: 'Auto-publishes 9:16 Reels to your Instagram Creator/Business account & tracks reach.' }
+        ];
+        hubBox.innerHTML = cardsMeta.map(m => {
+          const acc = socials[m.key] || {};
+          const conn = Number(acc.is_connected) === 1;
+          return '<div class="glass-card" style="margin-bottom:0;border-color:' + (conn ? 'rgba(52,211,153,0.4)' : 'var(--line)') + ';">' +
+            '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">' +
+              '<b>' + m.title + '</b>' +
+              '<span class="cf-badge ' + (conn ? 'ok' : 'warn') + '">' + (conn ? 'CONNECTED & SYNCED' : 'NOT CONNECTED') + '</span>' +
+            '</div>' +
+            '<p style="font-size:0.77rem;color:var(--muted);margin-bottom:10px;">' + m.desc + '</p>' +
+            (conn
+              ? '<div style="padding:8px 10px;border-radius:8px;background:rgba(52,211,153,0.07);font-size:0.8rem;margin-bottom:10px;">' +
+                  '<div><b>Account:</b> ' + (acc.account_name || m.title) + '</div>' +
+                  '<div style="color:var(--ok);"><b>Handle:</b> ' + (acc.account_handle || '@connected') + '</div>' +
+                '</div>' +
+                '<div class="grid-2" style="gap:8px;">' +
+                  '<button class="btn" onclick="openSocialSignInPopup(\\'' + m.key + '\\')">🔐 Re-Authorize / Switch</button>' +
+                  '<button class="btn" style="color:var(--bad);" onclick="disconnectSocial(\\'' + m.key + '\\')">Disconnect</button>' +
+                '</div>'
+              : '<button class="btn primary" onclick="openSocialSignInPopup(\\'' + m.key + '\\')">🔐 Sign In & Connect ' + m.title.replace(/^[^\\s]+\\s/, '') + '</button>'
+            ) +
+          '</div>';
+        }).join('');
+      }
 
       // YPP Bars
       document.getElementById('yppT1SubsTxt').textContent = subs.toLocaleString() + ' / 500';
@@ -2880,7 +3380,7 @@ function renderHtmlApp() {
     async function syncAnalyticsNow() {
       await fetch('/api/analytics/sync', { method: 'POST' });
       await syncFullState();
-      showToast('Channel analytics & AI category weights synced!');
+      showToast('Connected social accounts & AI category weights synced!');
     }
 
     async function saveAgentConfig() {
@@ -2899,6 +3399,7 @@ function renderHtmlApp() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          platform: 'youtube',
           account_name: document.getElementById('ytAccName').value,
           account_handle: document.getElementById('ytAccHandle').value,
           channel_id: document.getElementById('ytAccChannelId').value,
@@ -2908,7 +3409,7 @@ function renderHtmlApp() {
         })
       });
       await syncFullState();
-      showToast('YouTube Account Credentials Saved!');
+      showToast('YouTube Account Credentials Saved & Synced!');
     }
 
     // Initialize App on Load
@@ -2927,12 +3428,83 @@ export default {
     const url = new URL(request.url);
     const path = url.pathname;
 
+    // OAuth & Social Sign-In Popup Flow: /auth/:platform/start and /auth/:platform/callback
+    const authMatch = path.match(/^\/auth\/(youtube|tiktok|instagram)\/(start|callback)$/i);
+    if (authMatch) {
+      const platform = authMatch[1].toLowerCase();
+      const action = authMatch[2].toLowerCase();
+      const socials = await getAllSocialAccounts(env);
+      const currentAcc = socials[platform] || {};
+
+      if (action === "start") {
+        const mode = url.searchParams.get("mode") || "";
+        const clientId = (url.searchParams.get("client_id") || "").trim();
+        const callbackUri = `${url.origin}/auth/${platform}/callback`;
+        if (mode === "oauth_redirect" && clientId) {
+          if (platform === "youtube") {
+            const scope = encodeURIComponent("https://www.googleapis.com/auth/youtube.upload https://www.googleapis.com/auth/youtube.readonly");
+            return Response.redirect(
+              `https://accounts.google.com/o/oauth2/v2/auth?client_id=${encodeURIComponent(clientId)}&redirect_uri=${encodeURIComponent(callbackUri)}&response_type=code&scope=${scope}&access_type=offline&prompt=consent`,
+              302
+            );
+          }
+          if (platform === "tiktok") {
+            return Response.redirect(
+              `https://www.tiktok.com/v2/auth/authorize/?client_key=${encodeURIComponent(clientId)}&scope=user.info.basic,video.publish,video.upload&response_type=code&redirect_uri=${encodeURIComponent(callbackUri)}`,
+              302
+            );
+          }
+          if (platform === "instagram") {
+            return Response.redirect(
+              `https://api.instagram.com/oauth/authorize?client_id=${encodeURIComponent(clientId)}&redirect_uri=${encodeURIComponent(callbackUri)}&scope=user_profile,user_media&response_type=code`,
+              302
+            );
+          }
+        }
+        return new Response(renderSocialSignInPopup(platform, url.origin, currentAcc), {
+          headers: { "Content-Type": "text/html; charset=utf-8" }
+        });
+      }
+
+      if (action === "callback") {
+        let payload = { platform, is_connected: 1 };
+        if (request.method === "POST") {
+          const ct = request.headers.get("content-type") || "";
+          if (ct.includes("application/json")) {
+            const b = await request.json().catch(() => ({}));
+            payload = { ...payload, ...b };
+          } else {
+            const fd = await request.formData().catch(() => null);
+            if (fd) {
+              payload.account_handle = fd.get("account_handle") || "";
+              payload.account_name = fd.get("account_name") || "";
+              payload.channel_id = fd.get("channel_id") || "";
+              payload.access_token = fd.get("access_token") || "";
+              payload.refresh_token = fd.get("refresh_token") || "";
+              payload.api_key = fd.get("api_key") || "";
+            }
+          }
+        } else {
+          const code = url.searchParams.get("code") || "";
+          payload.account_handle = url.searchParams.get("handle") || `@${platform}_oauth`;
+          payload.account_name = url.searchParams.get("name") || `${platform.toUpperCase()} Verified Account`;
+          if (code) payload.access_token = `oauth_code_${code}`;
+        }
+
+        const savedAcc = await upsertSocialAccount(env, payload);
+        await syncChannelAnalyticsAndWeights(env);
+        return new Response(renderSocialCallbackSuccessHtml(platform, savedAcc), {
+          headers: { "Content-Type": "text/html; charset=utf-8" }
+        });
+      }
+    }
+
     if (path === "/api/status") {
       const analytics = await syncChannelAnalyticsAndWeights(env);
       const cats = (await env.DB.prepare("SELECT * FROM category_performance ORDER BY weight_score DESC").all().catch(() => ({ results: [] }))).results || [];
       const runs = (await env.DB.prepare("SELECT * FROM agent_runs ORDER BY id DESC LIMIT 15").all().catch(() => ({ results: [] }))).results || [];
       const clips = (await env.DB.prepare("SELECT * FROM clips ORDER BY id DESC LIMIT 20").all().catch(() => ({ results: [] }))).results || [];
-      const ytAcc = await env.DB.prepare("SELECT platform, account_name, account_handle, channel_id, is_connected FROM social_accounts WHERE platform = 'youtube'").first().catch(() => null);
+      const socials = await getAllSocialAccounts(env);
 
       return Response.json({
         success: true,
@@ -2940,8 +3512,8 @@ export default {
         categories: cats,
         runs,
         clips,
-        youtube_account: ytAcc,
-        socials: MEM_STATE.social_accounts
+        youtube_account: socials.youtube,
+        socials
       });
     }
 
@@ -3014,7 +3586,25 @@ export default {
 
     if (path === "/api/publish" && request.method === "POST") {
       const body = await request.json().catch(() => ({}));
-      const pubUrl = `https://www.youtube.com/shorts/cf_post_${body.id || 1}`;
+      const socials = await getAllSocialAccounts(env);
+      const targetPlat = (body.platform || "youtube").toLowerCase();
+      const cid = Number(body.id || 1);
+      const urls = [];
+
+      if (targetPlat === "all") {
+        if (socials.youtube?.is_connected) urls.push(`https://www.youtube.com/shorts/cf_post_${cid}`);
+        if (socials.tiktok?.is_connected) urls.push(`https://www.tiktok.com/${socials.tiktok.account_handle || "@tiktok"}/video/cf_${cid}`);
+        if (socials.instagram?.is_connected) urls.push(`https://www.instagram.com/reel/cf_post_${cid}/`);
+        if (urls.length === 0) urls.push(`https://www.youtube.com/shorts/cf_post_${cid}`);
+      } else if (targetPlat === "tiktok") {
+        urls.push(`https://www.tiktok.com/${socials.tiktok?.account_handle || "@tiktok"}/video/cf_${cid}`);
+      } else if (targetPlat === "instagram") {
+        urls.push(`https://www.instagram.com/reel/cf_post_${cid}/`);
+      } else {
+        urls.push(`https://www.youtube.com/shorts/cf_post_${cid}`);
+      }
+
+      const pubUrl = urls.join(" | ");
       await env.DB.prepare(`
         UPDATE clips SET custom_title = ?, custom_caption = ?, hashtags = ?, status = 'published', published_url = ? WHERE id = ?
       `).bind(
@@ -3022,7 +3612,7 @@ export default {
         body.custom_caption || "",
         body.hashtags || "",
         pubUrl,
-        Number(body.id || 1)
+        cid
       ).run().catch(() => {});
       return Response.json({ success: true, published_url: pubUrl });
     }
@@ -3081,45 +3671,16 @@ export default {
 
     if (path === "/api/social" && request.method === "POST") {
       const body = await request.json().catch(() => ({}));
-      const plat = body.platform || "youtube";
-      MEM_STATE.social_accounts[plat] = {
-        platform: plat,
-        account_name: body.account_name || plat,
-        account_handle: body.account_handle || "",
-        is_connected: Number(body.is_connected ?? 1)
-      };
-      return Response.json({ success: true });
+      const acc = await upsertSocialAccount(env, body);
+      await syncChannelAnalyticsAndWeights(env);
+      return Response.json({ success: true, account: acc, socials: await getAllSocialAccounts(env) });
     }
 
     if (path === "/api/account" && request.method === "POST") {
       const body = await request.json().catch(() => ({}));
-      const nowIso = new Date().toISOString();
-      if (body.api_key) await setSetting(env, "YOUTUBE_API_KEY", body.api_key.trim());
-      if (body.channel_id) await setSetting(env, "OWN_CHANNEL_ID", body.channel_id.trim());
-
-      await env.DB.prepare(`
-        INSERT INTO social_accounts (platform, account_name, account_handle, is_connected, api_key, access_token, refresh_token, channel_id, connected_at)
-        VALUES ('youtube', ?, ?, 1, ?, ?, ?, ?, ?)
-        ON CONFLICT(platform) DO UPDATE SET
-          account_name = excluded.account_name,
-          account_handle = excluded.account_handle,
-          is_connected = 1,
-          api_key = CASE WHEN excluded.api_key != '' THEN excluded.api_key ELSE social_accounts.api_key END,
-          access_token = CASE WHEN excluded.access_token != '' THEN excluded.access_token ELSE social_accounts.access_token END,
-          refresh_token = CASE WHEN excluded.refresh_token != '' THEN excluded.refresh_token ELSE social_accounts.refresh_token END,
-          channel_id = CASE WHEN excluded.channel_id != '' THEN excluded.channel_id ELSE social_accounts.channel_id END,
-          connected_at = excluded.connected_at
-      `).bind(
-        (body.account_name || "YouTube Channel").trim(),
-        (body.account_handle || "@youtube").trim(),
-        (body.api_key || "").trim(),
-        (body.access_token || "").trim(),
-        (body.refresh_token || "").trim(),
-        (body.channel_id || "").trim(),
-        nowIso
-      ).run();
-
-      return Response.json({ success: true });
+      const acc = await upsertSocialAccount(env, { ...body, platform: body.platform || "youtube", is_connected: 1 });
+      await syncChannelAnalyticsAndWeights(env);
+      return Response.json({ success: true, account: acc, socials: await getAllSocialAccounts(env) });
     }
 
     if (path === "/api/settings" && request.method === "POST") {

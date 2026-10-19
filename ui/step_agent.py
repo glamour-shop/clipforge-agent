@@ -338,15 +338,52 @@ def render_step_agent():
                         st.rerun()
 
     # ==========================================================================
-    # TAB 4: YOUTUBE ACCOUNT CREDENTIALS & AGENT RUN LOGS
+    # TAB 4: CONNECTED SOCIALS (YOUTUBE, TIKTOK, INSTAGRAM) & AGENT RUN LOGS
     # ==========================================================================
     with tab_account:
+        socials = get_social_accounts()
+        with st.container(border=True):
+            st.markdown("##### 🔐 Sign In & Connect Social Accounts (YouTube, TikTok, Instagram)")
+            st.caption("Sign in and link your social accounts so the ClipForge Auto-Agent automatically syncs channel analytics and posts daily Shorts across all connected platforms.")
+            sc1, sc2, sc3 = st.columns(3, gap="medium")
+            for col_el, (plat, title_lbl, desc_lbl) in zip(
+                [sc1, sc2, sc3],
+                [
+                    ("youtube", "▶️ YouTube Shorts", "Auto-posts daily 9:16 Shorts & syncs live YPP stats."),
+                    ("tiktok", "🎵 TikTok", "Auto-syncs TikTok profile & cross-posts rendered Shorts."),
+                    ("instagram", "📸 Instagram Reels", "Auto-publishes 9:16 Reels to your Creator account."),
+                ],
+            ):
+                with col_el:
+                    with st.container(border=True):
+                        p_info = socials.get(plat) or {}
+                        p_conn = bool(p_info.get("is_connected"))
+                        st.markdown(
+                            f"**{title_lbl}** {badge('CONNECTED & SYNCED' if p_conn else 'NOT CONNECTED', 'ok' if p_conn else 'warn')}",
+                            unsafe_allow_html=True,
+                        )
+                        st.caption(desc_lbl)
+                        if p_conn:
+                            st.caption(f"Account: **{html.escape(p_info.get('account_name') or title_lbl)}** (`{html.escape(p_info.get('account_handle') or '@connected')}`)")
+                            if st.button(f"🔄 Sync {plat.title()}", key=f"hub_sync_{plat}", width="stretch"):
+                                sync_channel_and_shorts_analytics()
+                                st.toast(f"Synced {title_lbl} with Auto-Agent!")
+                                st.rerun()
+                        else:
+                            h_val = st.text_input(f"{plat.title()} Handle / URL", placeholder=f"@{plat}_creator", key=f"hub_in_{plat}")
+                            if st.button(f"🔐 Sign In & Connect {plat.title()}", type="primary", key=f"hub_btn_{plat}", width="stretch"):
+                                final_h = h_val.strip() or f"@{plat}_creator"
+                                if not final_h.startswith("@") and not final_h.startswith("http"):
+                                    final_h = "@" + final_h
+                                save_social_account(plat, title_lbl.split(" ", 1)[-1], final_h)
+                                st.toast(f"Connected {title_lbl} ({final_h})!")
+                                st.rerun()
+
         col_yt, col_logs = st.columns([1.3, 1.7], gap="medium")
 
         with col_yt:
             with st.container(border=True):
-                st.markdown("##### 🔐 Provide Your YouTube Account for Auto-Posting & Analytics")
-                socials = get_social_accounts()
+                st.markdown("##### ⚙️ Advanced YouTube OAuth2 & API Credentials")
                 yt_acc = socials.get("youtube") or {}
                 is_conn = bool(yt_acc.get("is_connected"))
 
