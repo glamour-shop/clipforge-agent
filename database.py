@@ -234,8 +234,21 @@ def init_db():
         # Ensure default user profile exists
         cursor.execute("""
             INSERT OR IGNORE INTO user_profile (id, name, email, avatar_url, bio, signed_in, updated_at)
-            VALUES (1, 'Creator Studio', 'creator@clipforge.local', '', 'Autonomous Shorts & Reels Creator', 1, datetime('now'))
+            VALUES (1, 'ClipDIVE Creator', 'creator@clipforge.local', '', 'ClipDIVE (@clipdiveshorts) Shorts Studio', 1, datetime('now'))
         """)
+
+        # Ensure @clipdiveshorts is connected by default and replace any legacy fake @clipforge_shorts rows
+        cursor.execute("""
+            INSERT OR IGNORE INTO social_accounts (platform, account_name, account_handle, channel_id, is_connected, connected_at)
+            VALUES ('youtube', 'ClipDIVE', '@clipdiveshorts', 'UCZdMLoniXqpVRgG2TtbX2Og', 1, datetime('now'))
+        """)
+        cursor.execute("""
+            UPDATE social_accounts
+            SET account_name = 'ClipDIVE', account_handle = '@clipdiveshorts', channel_id = 'UCZdMLoniXqpVRgG2TtbX2Og', is_connected = 1
+            WHERE platform = 'youtube' AND (account_handle = '@clipforge_shorts' OR account_handle = '' OR account_name LIKE '%ClipForge%')
+        """)
+        cursor.execute("DELETE FROM clips WHERE published_url LIKE '%cf_auto_%' OR published_url LIKE '%cf_init_%' OR published_url LIKE '%cf_post_%' OR (status = 'published' AND (youtube_video_id IS NULL OR youtube_video_id = '' OR published_url LIKE '%cf_%'))")
+        cursor.execute("DELETE FROM channel_analytics WHERE channel_name LIKE '%ClipForge%' OR channel_id = 'UC_clipforge_studio'")
         
         conn.commit()
 

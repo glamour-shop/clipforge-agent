@@ -582,10 +582,10 @@ def publish_short_to_platform(
             except Exception as e:
                 print(f"[publish] YouTube direct upload notice: {e}")
 
-    # Local / Queued Publish (when OAuth token is not yet connected or in local studio mode)
-    pub_url = f"https://www.youtube.com/shorts/cf_{clip_id}_{vid_id[:6]}"
+    # Local / Queued Publish (when OAuth token is not yet connected)
+    pub_url = f"Queued in Studio for @clipdiveshorts ({os.path.basename(video_path)} — authorize Google OAuth2 in Tab 4 for direct API upload)"
     update_clip(clip_id, {
-        "status": "published",
+        "status": "approved",
         "published_url": pub_url,
         "published_at": now_iso,
         "custom_title": final_title,
@@ -599,6 +599,6 @@ def publish_short_to_platform(
         "published_url": pub_url,
         "title": final_title,
         "hashtags": final_hashtags_str,
-        "status": "published",
-        "message": f"Published '{final_title}' with hashtags ({final_hashtags_str}) to {platform.capitalize()} distribution queue!",
+        "status": "approved",
+        "message": f"Rendered '{final_title}' ({os.path.basename(video_path)}) and queued for @clipdiveshorts! Authorize Google OAuth2 in Tab 4 for automatic direct YouTube uploads.",
     }
